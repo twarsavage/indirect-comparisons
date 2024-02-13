@@ -1,9 +1,13 @@
 library(Matrix)
 library(kernlab)
 library(osqp)
+library(cbal)
+library(balancer)
+library(SuperLearner)
 
 rm(list = ls())
-source("~/Documents/kernel-maic.R")
+source("~/Github/indirect-comparisons/rkhs2-maic.R")
+source("~/Github/indirect-comparisons/eb-maic.R")
 
 gen_data <- function(n, sig0 = 2, sig1 = 1.5,
                      scenario = c("anchor", "unanchor",
@@ -33,13 +37,13 @@ gen_data <- function(n, sig0 = 2, sig1 = 1.5,
   # V <- cbind(int = rep(1, n), v1, v2, v3, v4)
   
   # coefficients
-  beta0 <- c(2, -3, -1, 1, 3)
-  beta1 <- c(0, 2, -2, -2, 2)
-  alpha0 <- c(-2, -1, 3, -3, 1)
-  alpha1 <- c(1, 2, -2, 2, -2)
-  delta0 <- c(-0.25, 0, 0, -0, -0)
-  delta1 <- c(0.25, 0, -0, 0, -0)
-  gamma <- c(0, -0.5, 0.5, -0.5, 0.5)
+  beta0 <- c(-2, -3, -1, 1, 3)
+  beta1 <- c(1, 2, -2, -2, 2)
+  alpha0 <- c(1, 2, -2, 2, -2)
+  alpha1 <- c(-2, -1, 3, -3, 1)
+  delta0 <- c(-0.25, 0.25, 0.25, -0.25, -0.25)
+  delta1 <- c(0.25, -0.25, 0.25, -0.25, 0.25)
+  gamma <- c(0, -0.5, -0.5, 0.5, 0.5)
   
   if (scenario == "anchor"){
     
@@ -56,7 +60,7 @@ gen_data <- function(n, sig0 = 2, sig1 = 1.5,
     mu_1 <- mu_0 + c(s*(X %*% alpha1) + (1 - s)*(X %*% alpha0))
     
     # indirect treatment effect
-    tau <- mean(X[s == 0,] %*% (alpha0 - alpha1))
+    tau <- mean(X[s == 0,] %*% (alpha1 - alpha0))
     
   } else if (scenario == "unanchor"){
     
@@ -73,7 +77,7 @@ gen_data <- function(n, sig0 = 2, sig1 = 1.5,
     mu_1 <- mu_0 + c(s*(X %*% alpha1) + (1 - s)*(X %*% alpha0))
     
     # indirect treatment effect
-    tau <- mean(X[s == 0,] %*% (alpha0 - alpha1))
+    tau <- mean(X[s == 0,] %*% (alpha1 - alpha0))
     
   } else if (scenario == "ps-mis-anchor") {
     
@@ -90,7 +94,7 @@ gen_data <- function(n, sig0 = 2, sig1 = 1.5,
     mu_1 <- mu_0 + c(s*(X %*% alpha1) + (1 - s)*(X %*% alpha0))
     
     # indirect treatment effect
-    tau <- mean(X[s == 0,] %*% (alpha0 - alpha1))
+    tau <- mean(X[s == 0,] %*% (alpha1 - alpha0))
     
   } else if (scenario == "out-mis-anchor"){
 
@@ -107,7 +111,7 @@ gen_data <- function(n, sig0 = 2, sig1 = 1.5,
     mu_1 <- mu_0 + c(s*(U %*% alpha1) + (1 - s)*(U %*% alpha0))
     
     # indirect treatment effect
-    tau <- mean(U[s == 0,] %*% (alpha0 - alpha1))
+    tau <- mean(U[s == 0,] %*% (alpha1 - alpha0))
     
   } else if (scenario == "ps-mis-unanchor") {
     
@@ -124,7 +128,7 @@ gen_data <- function(n, sig0 = 2, sig1 = 1.5,
     mu_1 <- mu_0 + c(s*(X %*% alpha1) + (1 - s)*(X %*% alpha0))
     
     # indirect treatment effect
-    tau <- mean(X[s == 0,] %*% (alpha0 - alpha1))
+    tau <- mean(X[s == 0,] %*% (alpha1 - alpha0))
     
   } else if (scenario == "out-mis-unanchor"){
     
@@ -141,7 +145,7 @@ gen_data <- function(n, sig0 = 2, sig1 = 1.5,
     mu_1 <- mu_0 + c(s*(U %*% alpha1) + (1 - s)*(U %*% alpha0))
     
     # indirect treatment effect
-    tau <- mean(U[s == 0,] %*% (alpha0 - alpha1))
+    tau <- mean(U[s == 0,] %*% (alpha1 - alpha0))
     
   }
   
@@ -172,41 +176,21 @@ sim_fit <- function(idx = 1, simDat, ...) {
   S <- dat$s
   X <- dat$X
   
-  # stratify by study
-  Y0 <- Y[S == 0]
-  Z0 <- Z[S == 0]
-  X0 <- X[S == 0,]
-  Y1 <- Y[S == 1]
-  Z1 <- Z[S == 1]
-  X1 <- X[S == 1,]
-  
-  # dimensions
-  m <- nrow(X0)
-  n <- nrow(X1)
-  
   # linear kernel
-  linear0 <- qpmaic(Y = Y0, X = X0, Z = Z0, target = X0, 
-                    kernel = kernlab::vanilladot(), lambda = 0, 
-                    eps_abs = 1e-5, eps_rel = 1e-5, verbose = FALSE)
-  linear1 <- qpmaic(Y = Y1, X = X1, Z = Z1, target = X0,
-                    kernel = kernlab::vanilladot(), lambda = 0,
-                    eps_abs = 1e-5, eps_rel = 1e-5, verbose = FALSE)
+  linear <- qp_maic(Y = Y, X = X, Z = Z, S = S,
+                     kernel = kernlab::vanilladot(), lambda = 0,
+                     eps_abs = 1e-5, eps_rel = 1e-5, verbose = FALSE)
   
-  tau_linear <- linear0$mu1 - linear1$mu1
-  # pool_linear <- c((m - 1)*linear0$sig1 + (n - 1)*linear1$sig1)/(n + m - 2)
-  omega_linear <- linear0$sig1 + linear1$sig1
+  tau_linear <- linear$tau
+  omega_linear <- linear$omega
   
   # RBF kernel
-  rbf0 <- qpmaic(Y = Y0, X = X0, Z = Z0, target = X0,
-                 kernel = kernlab::rbfdot(), lambda = 1,
-                 eps_abs = 1e-5, eps_rel = 1e-5, verbose = FALSE)
-  rbf1 <- qpmaic(Y = Y1, X = X1, Z = Z1, target = X0,
-                 kernel = kernlab::rbfdot(), lambda = 1,
-                 eps_abs = 1e-5, eps_rel = 1e-5, verbose = FALSE)
+  rbf <- qp_maic(Y = Y, X = X, Z = Z, S = S,
+                  kernel = kernlab::rbfdot(), lambda = 0,
+                  eps_abs = 1e-5, eps_rel = 1e-5, verbose = FALSE)
   
-  tau_rbf <- rbf0$mu1 - rbf1$mu1
-  # pool_rbf <- c((m - 1)*rbf0$sig1 + (n - 1)*rbf1$sig1)/(n + m - 2)
-  omega_rbf <- rbf0$sig1 + rbf1$sig1
+  tau_rbf <- rbf$tau
+  omega_rbf <- rbf$omega
   
   # combine results
   est <- c(tau = tau, linear = tau_linear, rbf = tau_rbf)
@@ -219,18 +203,18 @@ sim_fit <- function(idx = 1, simDat, ...) {
 n.iter <- 100 # simulation iterations
 
 # run simulation study
-simDat <- replicate(100, gen_data(n = 2000, scenario = "out-mis-anchor"))
+simDat <- replicate(100, gen_data(n = 2000, scenario = "anchor"))
 simFit <- lapply(1:100, sim_fit, simDat = simDat)
 
 # summarize
 est_mat <- do.call(rbind, lapply(simFit, function(lst, ...) lst$est))
 se_mat <- do.call(rbind, lapply(simFit, function(lst, ...) lst$se))
-cover_mat <- cbind(linear = est_mat[,2] - 1.96*se_mat[,1] <= mean(est_mat[,1]) &
-                     est_mat[,2] + 1.96*se_mat[,1] >= mean(est_mat[,1]),
-                   rbf = est_mat[,3] - 1.96*se_mat[,2] <= mean(est_mat[,1]) &
-                     est_mat[,3] + 1.96*se_mat[,2] >= mean(est_mat[,1]))
+cover_mat <- cbind(linear = est_mat[,2] - 1.96*se_mat[,1] <= est_mat[,1] &
+                     est_mat[,2] + 1.96*se_mat[,1] >= est_mat[,1],
+                   rbf = est_mat[,3] - 1.96*se_mat[,2] <= est_mat[,1] &
+                     est_mat[,3] + 1.96*se_mat[,2] >= est_mat[,1])
 
 # results
-colMeans(abs(est_mat[,2:3] - mean(est_mat[,1])))
+colMeans(est_mat[,2:3] - mean(est_mat[,1]))
 colMeans(se_mat)
 colMeans(cover_mat)

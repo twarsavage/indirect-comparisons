@@ -10,8 +10,7 @@
 #' @param eps_rel Relative error tolerance for solver
 #' @param ... Extra arguments for osqp solver
 #' @export
-qp_maic <- function(Y, X, Z, S, kernel = kernlab::vanilladot(), lambda = 0,
-                    pscores = 1, eps_abs = 1e-5, eps_rel = 1e-5, verbose = FALSE, ...) {
+eb_maic <- function(Y, X, Z, S, eps_abs = 1e-5, eps_rel = 1e-5, ...) {
   
   # ensure that covariate matrices are matrices and get total number of units
   X <- as.matrix(X)
@@ -137,9 +136,9 @@ qp_maic <- function(Y, X, Z, S, kernel = kernlab::vanilladot(), lambda = 0,
 #' @param eps_rel Relative error tolerance for solver
 #' @param ... Extra arguments for osqp solver
 #' @export
-drqp_maic <- function(Y, X, Z, target, kernel = kernlab::vanilladot(), lambda = 0,
-                      family = gaussian(), sl.lib = c("SL.mean", "SL.glm", "SL.earth"), 
-                      eps_abs = 1e-5, eps_rel = 1e-5, verbose = FALSE, ...) {
+eb_maic <- function(Y, X, Z, target,
+                    family = gaussian(), sl.lib = c("SL.mean", "SL.glm", "SL.earth"), 
+                    eps_abs = 1e-5, eps_rel = 1e-5, verbose = FALSE, ...) {
   
   # ensure that covariate matrices are matrices and get total number of units
   X <- as.matrix(X)
@@ -154,8 +153,8 @@ drqp_maic <- function(Y, X, Z, target, kernel = kernlab::vanilladot(), lambda = 
   })
   
   X <- X[,which(idx)] # remove intercepts
-
-  qp <- qp_maic(Y = Y, X = X, Z = Z, target = target, kernel = kernel, lambda = lambda,
+  
+  qp <- eb_maic(Y = Y, X = X, Z = Z, target = target, kernel = kernel, lambda = lambda,
                 eps_abs = eps_abs, eps_rel = eps_rel, verbose = verbose) 
   
   weights <- qp$weights
@@ -172,10 +171,10 @@ drqp_maic <- function(Y, X, Z, target, kernel = kernlab::vanilladot(), lambda = 
   mu1 <- (sum(psi1) + sum(muhat1))/m
   mu0 <- (sum(psi0) + sum(muhat0))/m
   tau_eif <- 
-
-  
-  # variances (needs work)
-  mu1_eif <- c(psi1, muhat1) - mu1
+    
+    
+    # variances (needs work)
+    mu1_eif <- c(psi1, muhat1) - mu1
   mu0_eif <- c(psi0, muhat0) - mu0
   tau <- mu1 - mu0
   sig1 <- var(mu1_eif)/m
@@ -186,5 +185,17 @@ drqp_maic <- function(Y, X, Z, target, kernel = kernlab::vanilladot(), lambda = 
   return(list(tau = tau, omega = omega, mu1 = mu1, mu0 = mu0, sig1 = sig1, sig0 = sig0,
               mu1_eif = mu1_eif, mu0_eif = mu0_eif, weights = weights, 
               imbalance0 = qp$imbalance0, imbalance1 = qp$imbalance1))
+  
+}
+
+esteq_transport <- function(S, X, Y, Z, p, q, theta, tau) {
+  
+  eq1 <- S*(2*Z - 1)*p*X
+  eq2 <- S*(p*X - theta)
+  eq3 <- (1 - S)*(q*X - theta)
+  eq4 <- S*p*(Z*(Y - tau) - (1 - Z)*Y)
+  
+  eq <- c(eq1, eq2, eq3, eq4) 
+  return(eq)
   
 }

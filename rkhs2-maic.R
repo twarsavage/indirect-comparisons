@@ -18,14 +18,14 @@ qp_maic <- function(Y, X, Z, S, kernel = kernlab::vanilladot(), lambda = 0,
   m <- sum(1 - S)
   n <- sum(S)
   
-  idx <- apply(X, 2, function(vec) {
-    if (is.numeric(vec)){
-      return(var(vec) != 0)
-    } else
-      return(FALSE)
-  })
-  
-  X <- X[,which(idx)]
+  # idx <- apply(X, 2, function(vec) {
+  #   if (is.numeric(vec)){
+  #     return(var(vec) != 0)
+  #   } else
+  #     return(FALSE)
+  # })
+  # 
+  # X <- X[,which(idx)]
   
   # stratify by study
   Y0 <- as.numeric(Y[S == 0])
@@ -35,47 +35,27 @@ qp_maic <- function(Y, X, Z, S, kernel = kernlab::vanilladot(), lambda = 0,
   Z1 <- as.numeric(Z[S == 1])
   X1 <- as.matrix(X[S == 1,])
   
-  # construct linear term vector
-  Q1 <- kernlab::kernelMatrix(kernel = kernel, x = X1, y = X0)
-  q1 <- -c(m*rowMeans(Q1))
-  Q0 <- kernlab::kernelMatrix(kernel = kernel, x = X0, y = X0)
-  q0 <- -c(m*rowMeans(Q0))
+  # Propensity Score Estimates
+  pscores0 <- c(SuperLearner(Y = Z0, X = data.frame(X0[,-1]), 
+                             SL.library = c("SL.mean", "SL.glm", "SL.earth"),
+                             family = binomial())$SL.predict)
+  pscores1 <- c(SuperLearner(Y = Z1, X = data.frame(X1[,-1]), 
+                             SL.library = c("SL.mean", "SL.glm", "SL.earth"),
+                             family = binomial())$SL.predict)
   
-  # Compute kernel matrices (S = 1)
-  kern1 <- kernlab::kernelMatrix(kernel, X1)
-  P11 <- tcrossprod(Z1) * kern1
-  P10 <- tcrossprod(1 - Z1) * kern1
+  pscores <- rep(1, nrow(X))
+  pscores[S == 0] <- pscores0
+  pscores[S == 1] <- pscores1
   
-  # Compute kernel matrices (S = 0)
-  kern0 <- kernlab::kernelMatrix(kernel, X0)
-  P01 <- tcrossprod(Z0) * kern0
-  P00 <- tcrossprod(1 - Z0) * kern0
-
-  # construct quadratic matrix
-  P1 <- P10 + P11 + lambda * Matrix::Diagonal(n)
-  P0 <- P00 + P01 + lambda * Matrix::Diagonal(m)
-
-  # sum to n weights
-  A1 <- rbind(Matrix::rbind2(Matrix::t(Z1)), Matrix::t(1 - Z1), Matrix::Diagonal(n))
-  l1 <- c(m, m, rep(0, n)) # maybe use n and pooled se?
-  u1 <- c(m, m, rep(m, n))
+  fitw <- standardize_treatment_kernel(X0 = X, Xtau = X, Xtarget = X0, S = S, Z = Z, pscores = pscores,
+                                       kernel0 = kernel, kerneltau = kernel, lambda = lambda,
+                                       lowlim = 0, uplim = m, scale_sample_size = FALSE,
+                                       verbose = verbose, return_program = FALSE, init_uniform = FALSE,
+                                       eps_abs = eps_abs, eps_rel = eps_rel, gc = FALSE)
   
-  # upper and lower bounds of individual weights
-  A0 <- rbind(Matrix::rbind2(Matrix::t(Z0)), Matrix::t(1 - Z0), Matrix::Diagonal(m))
-  l0 <- c(m, m, rep(0, m)) # maybe use n and pooled se?
-  u0 <- c(m, m, rep(m, m))
-  
-  # set optimization settings
-  settings <- do.call(osqp::osqpSettings,
-                      c(list(verbose = verbose,
-                             eps_rel = eps_rel,
-                             eps_abs = eps_abs)))
-  
-  # solve optimization problem
-  solution1 <- osqp::solve_osqp(P = P1, q = q1, A = A1, l = l1, u = u1, pars = settings)
-  weights1 <- solution1$x
-  solution0 <- osqp::solve_osqp(P = P0, q = q0, A = A0, l = l0, u = u0, pars = settings)
-  weights0 <- solution0$x
+  weights <- fitw$weights/(Z*pscores + (1 - Z)*(1 - pscores))
+  weights0 <- weights[S == 0]
+  weights1 <- weights[S == 1]
   
   # compute imbalances
   imbalance11 <- c(colMeans(X0)) - c(t(Z1*X1) %*% weights1)/n
@@ -154,7 +134,7 @@ drqp_maic <- function(Y, X, Z, target, kernel = kernlab::vanilladot(), lambda = 
   })
   
   X <- X[,which(idx)] # remove intercepts
-
+  
   qp <- qp_maic(Y = Y, X = X, Z = Z, target = target, kernel = kernel, lambda = lambda,
                 eps_abs = eps_abs, eps_rel = eps_rel, verbose = verbose) 
   
@@ -172,10 +152,10 @@ drqp_maic <- function(Y, X, Z, target, kernel = kernlab::vanilladot(), lambda = 
   mu1 <- (sum(psi1) + sum(muhat1))/m
   mu0 <- (sum(psi0) + sum(muhat0))/m
   tau_eif <- 
-
-  
-  # variances (needs work)
-  mu1_eif <- c(psi1, muhat1) - mu1
+    
+    
+    # variances (needs work)
+    mu1_eif <- c(psi1, muhat1) - mu1
   mu0_eif <- c(psi0, muhat0) - mu0
   tau <- mu1 - mu0
   sig1 <- var(mu1_eif)/m
